@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Løp og Morro</title>
+
+<style>
+body{
+    font-family: Arial;
+    background: linear-gradient(to bottom, #87ceeb, #ffffff);
+    text-align:center;
+    margin:0;
+}
+
+header{
+    background:#2e8b57;
+    color:white;
+    padding:15px;
+    font-size:20px;
+}
+
+.container{
+    background:white;
+    width:90%;
+    max-width:400px;
+    margin:20px auto;
+    padding:20px;
+    border-radius:15px;
+    box-shadow:0 4px 12px rgba(0,0,0,0.2);
+}
+
+input, select{
+    width:100%;
+    padding:10px;
+    margin:8px 0;
+}
+
+button{
+    padding:10px;
+    width:100%;
+    background:#2e8b57;
+    color:white;
+    border:none;
+    border-radius:8px;
+    margin-top:5px;
+}
+
+ul{ text-align:left; padding:0; list-style:none; }
+li{ margin:5px 0; }
+
+#app{ display:none; }
+</style>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+</head>
+<body>
+
+<header>🏁 Løp og Morro</header>
+
+<div class="container" id="loginBox">
+<h2>Logg inn</h2>
+<input type="email" id="email" placeholder="E-post">
+<input type="password" id="password" placeholder="Passord">
+<button onclick="login()">Logg inn</button>
+<button onclick="register()">Registrer</button>
+</div>
+
+<div id="app">
+
+<div class="container">
+<h3>Hei <span id="user"></span></h3>
+<button onclick="logout()">Logg ut</button>
+</div>
+
+<div class="container">
+<h3>Lag løp</h3>
+<input id="raceName" placeholder="Navn">
+<input type="date" id="raceDate">
+<select id="distance">
+<option>5km</option>
+<option>10km</option>
+<option>Halvmaraton</option>
+</select>
+<button onclick="addRace()">Lag</button>
+</div>
+
+<div class="container">
+<h3>Løp</h3>
+<select id="raceList"></select>
+<button onclick="joinRace()">Bli med</button>
+<ul id="races"></ul>
+</div>
+
+<div class="container">
+<h3>Resultater</h3>
+<input id="time" placeholder="Tid (f.eks 25:30)">
+<button onclick="addResult()">Legg til tid</button>
+<ul id="results"></ul>
+</div>
+
+</div>
+
+<script>
+
+// ⚠️ LIM INN DIN FIREBASE CONFIG HER
+const firebaseConfig = {
+  apiKey: "YOUR_KEY",
+  authDomain: "YOUR_APP.firebaseapp.com",
+  projectId: "YOUR_APP"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+let currentUser = null;
+let racesData = [];
+
+function register(){
+    auth.createUserWithEmailAndPassword(email.value, password.value);
+}
+
+function login(){
+    auth.signInWithEmailAndPassword(email.value, password.value);
+}
+
+function logout(){
+    auth.signOut();
+}
+
+auth.onAuthStateChanged(user => {
+    if(user){
+        currentUser = user;
+        loginBox.style.display="none";
+        app.style.display="block";
+        document.getElementById("user").textContent = user.email;
+        loadRaces();
+    } else {
+        loginBox.style.display="block";
+        app.style.display="none";
+    }
+});
+
+function addRace(){
+    db.collection("races").add({
+        name: raceName.value,
+        date: raceDate.value,
+        dist: distance.value
+    });
+}
+
+function loadRaces(){
+    db.collection("races").onSnapshot(snapshot => {
+        raceList.innerHTML="";
+        races.innerHTML="";
+        racesData = [];
+
+        snapshot.forEach(doc => {
+            let r = doc.data();
+            r.id = doc.id;
+            racesData.push(r);
+
+            let option = document.createElement("option");
+            option.text = r.name;
+            raceList.add(option);
+
+            let li = document.createElement("li");
+            li.textContent = `${r.name} (${r.date}) - ${r.dist}`;
+            races.appendChild(li);
+        });
+    });
+}
+
+function joinRace(){
+    let race = racesData[raceList.selectedIndex];
+
+    db.collection("participants").add({
+        raceId: race.id,
+        user: currentUser.email
+    });
+}
+
+function addResult(){
+    let race = racesData[raceList.selectedIndex];
+
+    db.collection("results").add({
+        raceId: race.id,
+        user: currentUser.email,
+        time: time.value
+    });
+
+    loadResults();
+}
+
+function loadResults(){
+    results.innerHTML="";
+
+    let race = racesData[raceList.selectedIndex];
+
+    db.collection("results")
+    .where("raceId","==", race.id)
+    .onSnapshot(snapshot => {
+        results.innerHTML="";
+
+        snapshot.forEach(doc => {
+            let r = doc.data();
+            let li = document.createElement("li");
+            li.textContent = `${r.user} - ${r.time}`;
+            results.appendChild(li);
+        });
+    });
+}
+
+raceList.onchange = loadResults;
+
+</script>
+
+</body>
+</html>
