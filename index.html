@@ -2,221 +2,227 @@
 <html lang="no">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Løp og Morro</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Strava Mini Pro</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <style>
-body{
-    font-family: Arial;
-    background: linear-gradient(to bottom, #87ceeb, #ffffff);
-    text-align:center;
-    margin:0;
-}
-
-header{
-    background:#2e8b57;
-    color:white;
-    padding:15px;
-    font-size:20px;
-}
-
-.container{
-    background:white;
-    width:90%;
-    max-width:400px;
-    margin:20px auto;
-    padding:20px;
-    border-radius:15px;
-    box-shadow:0 4px 12px rgba(0,0,0,0.2);
-}
-
-input, select{
-    width:100%;
-    padding:10px;
-    margin:8px 0;
-}
-
-button{
-    padding:10px;
-    width:100%;
-    background:#2e8b57;
-    color:white;
-    border:none;
-    border-radius:8px;
-    margin-top:5px;
-}
-
-ul{ text-align:left; padding:0; list-style:none; }
-li{ margin:5px 0; }
-
-#app{ display:none; }
+body{margin:0;font-family:Arial;background:#0f172a;color:white;text-align:center}
+.container{background:white;color:black;margin:10px auto;padding:10px;border-radius:12px;width:92%;max-width:520px}
+button{width:100%;padding:10px;margin:5px 0;border-radius:10px;border:none;background:#2563eb;color:white;font-weight:bold}
+#map{height:320px;border-radius:10px}
+small{display:block;margin-top:5px}
 </style>
-
-<!-- Firebase -->
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-
 </head>
+
 <body>
 
-<header>🏁 Løp og Morro</header>
+<header>🏃 Strava Mini Pro</header>
 
-<div class="container" id="loginBox">
-<h2>Logg inn</h2>
-<input type="email" id="email" placeholder="E-post">
-<input type="password" id="password" placeholder="Passord">
-<button onclick="login()">Logg inn</button>
-<button onclick="register()">Registrer</button>
+<div id="hostLogin" class="container">
+  <h3>Start</h3>
+  <button onclick="enter('HOST')">👑 Host</button>
+  <button onclick="enter('GUEST')">👤 Guest</button>
 </div>
 
-<div id="app">
+<div id="app" style="display:none">
 
 <div class="container">
-<h3>Hei <span id="user"></span></h3>
-<button onclick="logout()">Logg ut</button>
-</div>
+<h3 id="user"></h3>
 
-<div class="container">
-<h3>Lag løp</h3>
-<input id="raceName" placeholder="Navn">
-<input type="date" id="raceDate">
-<select id="distance">
-<option>5km</option>
-<option>10km</option>
-<option>Halvmaraton</option>
-</select>
-<button onclick="addRace()">Lag</button>
+<button onclick="startRun()">Start løp</button>
+<button onclick="stopRun()">Stopp</button>
+
+<button onclick="enableRoute()">🏁 Lag rute</button>
+<button onclick="disableRoute()">❌ Stopp rute</button>
+<button onclick="saveRoute()">💾 Lagre rute</button>
+
+<button onclick="saveGhost()">👻 Ghost</button>
+<button onclick="startGhost()">▶ Ghost start</button>
+
+<small id="stats">0</small>
 </div>
 
 <div class="container">
-<h3>Løp</h3>
-<select id="raceList"></select>
-<button onclick="joinRace()">Bli med</button>
-<ul id="races"></ul>
+<div id="map"></div>
 </div>
 
 <div class="container">
-<h3>Resultater</h3>
-<input id="time" placeholder="Tid (f.eks 25:30)">
-<button onclick="addResult()">Legg til tid</button>
-<ul id="results"></ul>
+<h3>Leaderboard</h3>
+<ul id="board"></ul>
 </div>
 
 </div>
 
 <script>
 
-// ⚠️ LIM INN DIN FIREBASE CONFIG HER
-const firebaseConfig = {
-  apiKey: "YOUR_KEY",
-  authDomain: "YOUR_APP.firebaseapp.com",
-  projectId: "YOUR_APP"
-};
+// ---------------- STATE ----------------
+let map;
+let user;
 
-firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db = firebase.firestore();
+let watchId = null;
+let startTime = 0;
 
-let currentUser = null;
-let racesData = [];
+let path = [];
+let route = [];
+let routeLine = null;
+let routeHandler = null;
 
-function register(){
-    auth.createUserWithEmailAndPassword(email.value, password.value);
+let distance = 0;
+let lastPos = null;
+
+let ghost = [];
+let ghostMarker;
+let ghostIndex = 0;
+let ghostTimer;
+
+// ---------------- APP ----------------
+function enter(type){
+  user = type;
+  document.getElementById("hostLogin").style.display="none";
+  document.getElementById("app").style.display="block";
+  document.getElementById("user").innerText = type;
+  setTimeout(initMap,200);
 }
 
-function login(){
-    auth.signInWithEmailAndPassword(email.value, password.value);
+// ---------------- MAP ----------------
+function initMap(){
+  map = L.map('map').setView([63.11, 7.73], 13);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
 }
 
-function logout(){
-    auth.signOut();
-}
+// ---------------- RUN ----------------
+function startRun(){
+  path = [];
+  distance = 0;
+  lastPos = null;
+  startTime = Date.now();
 
-auth.onAuthStateChanged(user => {
-    if(user){
-        currentUser = user;
-        loginBox.style.display="none";
-        app.style.display="block";
-        document.getElementById("user").textContent = user.email;
-        loadRaces();
-    } else {
-        loginBox.style.display="block";
-        app.style.display="none";
+  if(watchId) navigator.geolocation.clearWatch(watchId);
+
+  watchId = navigator.geolocation.watchPosition(p => {
+
+    let pos = [p.coords.latitude, p.coords.longitude];
+    path.push(pos);
+
+    if(lastPos){
+      distance += getDistance(lastPos,pos);
     }
-});
 
-function addRace(){
-    db.collection("races").add({
-        name: raceName.value,
-        date: raceDate.value,
-        dist: distance.value
-    });
+    lastPos = pos;
+    updateStats();
+
+  }, err => console.log(err), {enableHighAccuracy:true});
 }
 
-function loadRaces(){
-    db.collection("races").onSnapshot(snapshot => {
-        raceList.innerHTML="";
-        races.innerHTML="";
-        racesData = [];
+function stopRun(){
+  navigator.geolocation.clearWatch(watchId);
 
-        snapshot.forEach(doc => {
-            let r = doc.data();
-            r.id = doc.id;
-            racesData.push(r);
+  let runs = JSON.parse(localStorage.getItem("runs")||"[]");
 
-            let option = document.createElement("option");
-            option.text = r.name;
-            raceList.add(option);
+  runs.push({
+    user,
+    time: Date.now()-startTime,
+    distance
+  });
 
-            let li = document.createElement("li");
-            li.textContent = `${r.name} (${r.date}) - ${r.dist}`;
-            races.appendChild(li);
-        });
-    });
+  localStorage.setItem("runs", JSON.stringify(runs));
+
+  renderBoard();
 }
 
-function joinRace(){
-    let race = racesData[raceList.selectedIndex];
+// ---------------- ROUTE ----------------
+function enableRoute(){
+  map.off("click");
 
-    db.collection("participants").add({
-        raceId: race.id,
-        user: currentUser.email
-    });
+  routeHandler = e => {
+    route.push([e.latlng.lat,e.latlng.lng]);
+
+    if(routeLine) map.removeLayer(routeLine);
+
+    routeLine = L.polyline(route,{color:"blue"}).addTo(map);
+  };
+
+  map.on("click", routeHandler);
 }
 
-function addResult(){
-    let race = racesData[raceList.selectedIndex];
-
-    db.collection("results").add({
-        raceId: race.id,
-        user: currentUser.email,
-        time: time.value
-    });
-
-    loadResults();
+function disableRoute(){
+  map.off("click", routeHandler);
 }
 
-function loadResults(){
-    results.innerHTML="";
-
-    let race = racesData[raceList.selectedIndex];
-
-    db.collection("results")
-    .where("raceId","==", race.id)
-    .onSnapshot(snapshot => {
-        results.innerHTML="";
-
-        snapshot.forEach(doc => {
-            let r = doc.data();
-            let li = document.createElement("li");
-            li.textContent = `${r.user} - ${r.time}`;
-            results.appendChild(li);
-        });
-    });
+// ---------------- SAVE ROUTE ----------------
+function saveRoute(){
+  localStorage.setItem("route", JSON.stringify(route));
+  alert("Saved!");
 }
 
-raceList.onchange = loadResults;
+// ---------------- GHOST ----------------
+function saveGhost(){
+  localStorage.setItem("ghost", JSON.stringify(path));
+}
+
+function startGhost(){
+  ghost = JSON.parse(localStorage.getItem("ghost")||"[]");
+
+  if(ghostMarker) map.removeLayer(ghostMarker);
+
+  ghostIndex = 0;
+  ghostMarker = L.marker(ghost[0]).addTo(map);
+
+  clearInterval(ghostTimer);
+
+  ghostTimer = setInterval(()=>{
+    if(ghostIndex < ghost.length){
+      ghostMarker.setLatLng(ghost[ghostIndex++]);
+    }
+  },500);
+}
+
+// ---------------- BOARD ----------------
+function renderBoard(){
+  let runs = JSON.parse(localStorage.getItem("runs")||"[]");
+
+  runs.sort((a,b)=>a.time-b.time);
+
+  document.getElementById("board").innerHTML =
+    runs.map((r,i)=>`
+      <li>${i+1}. ${r.user} ${(r.time/1000).toFixed(1)}s ${(r.distance/1000).toFixed(2)}km</li>
+    `).join("");
+}
+
+// ---------------- STATS ----------------
+function updateStats(){
+  let km = distance/1000;
+  let min = (Date.now()-startTime)/60000;
+  let pace = km ? (min/km).toFixed(2) : 0;
+
+  document.getElementById("stats").innerText =
+    `Pace ${pace} min/km | ${km.toFixed(2)} km`;
+}
+
+// ---------------- DISTANCE ----------------
+function getDistance(a,b){
+  const R=6371e3;
+  const toRad=x=>x*Math.PI/180;
+
+  let dLat=toRad(b[0]-a[0]);
+  let dLon=toRad(b[1]-a[1]);
+
+  let x=Math.sin(dLat/2)**2+
+        Math.cos(toRad(a[0]))*
+        Math.cos(toRad(b[0]))*
+        Math.sin(dLon/2)**2;
+
+  return 2*R*Math.asin(Math.sqrt(x));
+}
+
+// ---------------- INIT ----------------
+window.onload=()=>{
+  renderBoard();
+};
 
 </script>
 
