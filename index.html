@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Strava Mini Pro</title>
+<title>Løp og Morro</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -13,15 +13,14 @@ body{margin:0;font-family:Arial;background:#0f172a;color:white;text-align:center
 .container{background:white;color:black;margin:10px auto;padding:10px;border-radius:12px;width:92%;max-width:520px}
 button{width:100%;padding:10px;margin:5px 0;border-radius:10px;border:none;background:#2563eb;color:white;font-weight:bold}
 #map{height:320px;border-radius:10px}
-small{display:block;margin-top:5px}
 </style>
 </head>
 
 <body>
 
-<header>🏃 Strava Mini Pro</header>
+<header>🏃 Løp og Morro</header>
 
-<div id="hostLogin" class="container">
+<div id="login" class="container">
   <h3>Start</h3>
   <button onclick="enter('HOST')">👑 Host</button>
   <button onclick="enter('GUEST')">👤 Guest</button>
@@ -35,12 +34,11 @@ small{display:block;margin-top:5px}
 <button onclick="startRun()">Start løp</button>
 <button onclick="stopRun()">Stopp</button>
 
-<button onclick="enableRoute()">🏁 Lag rute</button>
-<button onclick="disableRoute()">❌ Stopp rute</button>
-<button onclick="saveRoute()">💾 Lagre rute</button>
+<button class="route-btn" onclick="enableRoute()">🏁 Lag rute</button>
+<button class="route-btn" onclick="disableRoute()">❌ Stopp rute</button>
+<button class="route-btn" onclick="saveRoute()">💾 Lag løp</button>
 
-<button onclick="saveGhost()">👻 Ghost</button>
-<button onclick="startGhost()">▶ Ghost start</button>
+<button onclick="joinRace()">🏃 Meld meg på</button>
 
 <small id="stats">0</small>
 </div>
@@ -50,160 +48,141 @@ small{display:block;margin-top:5px}
 </div>
 
 <div class="container">
-<h3>Leaderboard</h3>
-<ul id="board"></ul>
+<h3>Deltakere</h3>
+<ul id="participants"></ul>
 </div>
 
 </div>
 
 <script>
 
-// ---------------- STATE ----------------
-let map;
-let user;
+// -------- STATE --------
+let map, user, isHost=false;
+let watchId=null, startTime=0;
+let path=[], route=[], routeLine=null, routeHandler=null;
+let distance=0, lastPos=null;
 
-let watchId = null;
-let startTime = 0;
-
-let path = [];
-let route = [];
-let routeLine = null;
-let routeHandler = null;
-
-let distance = 0;
-let lastPos = null;
-
-let ghost = [];
-let ghostMarker;
-let ghostIndex = 0;
-let ghostTimer;
-
-// ---------------- APP ----------------
+// -------- LOGIN --------
 function enter(type){
-  user = type;
-  document.getElementById("hostLogin").style.display="none";
+
+  if(type==="HOST"){
+    let kode = prompt("Host kode:");
+    if(kode!=="løp og morro") return alert("Feil kode!");
+    isHost=true;
+    user="HOST";
+  } else {
+    user="GUEST";
+  }
+
+  document.getElementById("login").style.display="none";
   document.getElementById("app").style.display="block";
-  document.getElementById("user").innerText = type;
-  setTimeout(initMap,200);
+  document.getElementById("user").innerText=user;
+
+  setTimeout(()=>{
+    initMap();
+    toggleRouteButtons();
+    renderParticipants();
+  },200);
 }
 
-// ---------------- MAP ----------------
+// -------- MAP --------
 function initMap(){
-  map = L.map('map').setView([63.11, 7.73], 13);
-
+  map = L.map('map').setView([63.11,7.73],13);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+
+  let race = JSON.parse(localStorage.getItem("race"));
+  if(race && race.route.length){
+    L.polyline(race.route,{color:"red"}).addTo(map);
+  }
 }
 
-// ---------------- RUN ----------------
+// -------- RUN --------
 function startRun(){
-  path = [];
-  distance = 0;
-  lastPos = null;
-  startTime = Date.now();
+  path=[]; distance=0; lastPos=null; startTime=Date.now();
 
-  if(watchId) navigator.geolocation.clearWatch(watchId);
-
-  watchId = navigator.geolocation.watchPosition(p => {
-
-    let pos = [p.coords.latitude, p.coords.longitude];
+  watchId = navigator.geolocation.watchPosition(p=>{
+    let pos=[p.coords.latitude,p.coords.longitude];
     path.push(pos);
 
-    if(lastPos){
-      distance += getDistance(lastPos,pos);
-    }
+    if(lastPos) distance+=getDistance(lastPos,pos);
+    lastPos=pos;
 
-    lastPos = pos;
     updateStats();
-
-  }, err => console.log(err), {enableHighAccuracy:true});
+  });
 }
 
 function stopRun(){
   navigator.geolocation.clearWatch(watchId);
-
-  let runs = JSON.parse(localStorage.getItem("runs")||"[]");
-
-  runs.push({
-    user,
-    time: Date.now()-startTime,
-    distance
-  });
-
-  localStorage.setItem("runs", JSON.stringify(runs));
-
-  renderBoard();
 }
 
-// ---------------- ROUTE ----------------
+// -------- ROUTE (HOST ONLY) --------
+function toggleRouteButtons(){
+  if(!isHost){
+    document.querySelectorAll(".route-btn").forEach(b=>b.style.display="none");
+  }
+}
+
 function enableRoute(){
-  map.off("click");
+  if(!isHost) return alert("Kun host!");
 
-  routeHandler = e => {
+  route=[];
+  map.on("click", routeHandler = e=>{
     route.push([e.latlng.lat,e.latlng.lng]);
-
     if(routeLine) map.removeLayer(routeLine);
-
-    routeLine = L.polyline(route,{color:"blue"}).addTo(map);
-  };
-
-  map.on("click", routeHandler);
+    routeLine=L.polyline(route,{color:"blue"}).addTo(map);
+  });
 }
 
 function disableRoute(){
   map.off("click", routeHandler);
 }
 
-// ---------------- SAVE ROUTE ----------------
 function saveRoute(){
-  localStorage.setItem("route", JSON.stringify(route));
-  alert("Saved!");
+  if(!isHost) return;
+
+  let name = prompt("Navn på løpet:");
+
+  let race = {name, route};
+  localStorage.setItem("race", JSON.stringify(race));
+  localStorage.setItem("participants", JSON.stringify([]));
+
+  alert("Løp laget!");
 }
 
-// ---------------- GHOST ----------------
-function saveGhost(){
-  localStorage.setItem("ghost", JSON.stringify(path));
+// -------- JOIN --------
+function joinRace(){
+  let race = JSON.parse(localStorage.getItem("race"));
+  if(!race) return alert("Ingen løp!");
+
+  let list = JSON.parse(localStorage.getItem("participants")||"[]");
+
+  if(!list.includes(user)){
+    list.push(user);
+    localStorage.setItem("participants", JSON.stringify(list));
+  }
+
+  renderParticipants();
 }
 
-function startGhost(){
-  ghost = JSON.parse(localStorage.getItem("ghost")||"[]");
+// -------- PARTICIPANTS --------
+function renderParticipants(){
+  let list = JSON.parse(localStorage.getItem("participants")||"[]");
 
-  if(ghostMarker) map.removeLayer(ghostMarker);
-
-  ghostIndex = 0;
-  ghostMarker = L.marker(ghost[0]).addTo(map);
-
-  clearInterval(ghostTimer);
-
-  ghostTimer = setInterval(()=>{
-    if(ghostIndex < ghost.length){
-      ghostMarker.setLatLng(ghost[ghostIndex++]);
-    }
-  },500);
+  document.getElementById("participants").innerHTML =
+    list.map(p=>`<li>${p}</li>`).join("");
 }
 
-// ---------------- BOARD ----------------
-function renderBoard(){
-  let runs = JSON.parse(localStorage.getItem("runs")||"[]");
-
-  runs.sort((a,b)=>a.time-b.time);
-
-  document.getElementById("board").innerHTML =
-    runs.map((r,i)=>`
-      <li>${i+1}. ${r.user} ${(r.time/1000).toFixed(1)}s ${(r.distance/1000).toFixed(2)}km</li>
-    `).join("");
-}
-
-// ---------------- STATS ----------------
+// -------- STATS --------
 function updateStats(){
-  let km = distance/1000;
-  let min = (Date.now()-startTime)/60000;
-  let pace = km ? (min/km).toFixed(2) : 0;
+  let km=distance/1000;
+  let min=(Date.now()-startTime)/60000;
+  let pace=km?(min/km).toFixed(2):0;
 
   document.getElementById("stats").innerText =
-    `Pace ${pace} min/km | ${km.toFixed(2)} km`;
+    `Pace ${pace} | ${km.toFixed(2)} km`;
 }
 
-// ---------------- DISTANCE ----------------
+// -------- DISTANCE --------
 function getDistance(a,b){
   const R=6371e3;
   const toRad=x=>x*Math.PI/180;
@@ -218,11 +197,6 @@ function getDistance(a,b){
 
   return 2*R*Math.asin(Math.sqrt(x));
 }
-
-// ---------------- INIT ----------------
-window.onload=()=>{
-  renderBoard();
-};
 
 </script>
 
